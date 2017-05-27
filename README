@@ -1,0 +1,7 @@
+This is a multihost LLMNR publisher
+
+Does not require any configuration.
+
+Responds with the list of addresses associated with the interface the request came from.
+Works fine for Windows.
+Daemon is supposed to run on POSIX compatible system.
