@@ -5,3 +5,9 @@ Does not require any configuration.
 Responds with the list of addresses associated with the interface the request came from.
 Works fine for Windows.
 Daemon is supposed to run on POSIX compatible system.
+
+Uses netifaces package to access the list of interfaces.
+Uses dnslib to work with raw DNS packets.
+
+Known issue: Microsoft LLMNR uses UTF-8, not IDNA. You will get tracebacks when resolving non-ASCII names.
+
