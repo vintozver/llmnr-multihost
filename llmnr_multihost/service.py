@@ -5,7 +5,7 @@ import struct
 import socket
 import socketserver
 import dnslib
-import netifaces
+import pyroute2
 import logging
 
 
@@ -115,21 +115,14 @@ class ResolverHandler(socketserver.BaseRequestHandler):
                             if iface_index is None:
                                 return
 
-                            ifaces = netifaces.interfaces()
-                            try:
-                                iface = ifaces[iface_index - 1]
-                            except IndexError:
-                                return
+                            def yield_ipaddr():
+                                for ifaddr in pyroute2.IPRoute().get_addr(family=socket.AF_INET6, index=iface_index):
+                                    if 'attrs' in ifaddr:
+                                        for ifaddr_attr_key, ifaddr_attr_value in ifaddr['attrs']:
+                                            if ifaddr_attr_key == 'IFA_ADDRESS':
+                                                yield ifaddr_attr_value
 
-                            try:
-                                ifaddresses = netifaces.ifaddresses(iface)[netifaces.AF_INET6]
-                            except (KeyError, ValueError):
-                                return
-
-                            for ifaddress in ifaddresses:
-                                # IPv6 address may be link-local and might have interface suffix
-                                ipaddress = ifaddress['addr'].split('%', 1)[0]
-
+                            for ipaddress in yield_ipaddr():
                                 dnsresp.add_answer(dnslib.RR(
                                     dnsreq.q.qname.idna(),
                                     dnslib.QTYPE.AAAA,
@@ -145,4 +138,3 @@ class ResolverHandler(socketserver.BaseRequestHandler):
                     logging.debug('OUT TO ADDRESS: %s, LLMNR DNS packet:\n%s' % (
                         self.client_address, repr(dnsresp)
                     ))
-

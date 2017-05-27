@@ -11,7 +11,7 @@ setup(
     url='https://www.python.org/sigs/distutils-sig/',
     packages=['llmnr_multihost'],
     install_requires=[
-        'netifaces',
+        'pyroute2',
         'dnslib',
     ],
     entry_points={
