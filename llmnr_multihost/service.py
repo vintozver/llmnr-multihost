@@ -1,3 +1,5 @@
+import functools
+import operator
 from . import ctypes
 import struct
 import socket
@@ -26,7 +28,8 @@ class ResolverServer(socketserver.UDPServer):
         except OSError as err:
             logging.error('Failed to subscribe to IPv4 multicast. Error: %d, %s' % (err.errno, err.strerror))
 
-    def __init__(self):
+    def __init__(self, hostname_list):
+        self.hostname_list = hostname_list
         super(ResolverServer, self).__init__(('224.0.0.252', 5355), ResolverHandler)
 
 
@@ -61,7 +64,8 @@ class ResolverServer6(socketserver.UDPServer):
                 iface_index = _in6_pktinfo.ipi6_ifindex
         return (data, self.socket, iface_index), client_addr
 
-    def __init__(self):
+    def __init__(self, hostname_list):
+        self.hostname_list = hostname_list
         super(ResolverServer6, self).__init__(('FF02:0:0:0:0:0:1:3', 5355, 0, 2), ResolverHandler)
 
 
@@ -99,8 +103,12 @@ class ResolverHandler(socketserver.BaseRequestHandler):
                 if dnsreq.header.aa:  # RFC 4795: flag C
                     return
 
-                idna = dnsreq.q.qname.idna()
-                if ('dummy' in idna) or ('test' in idna):
+                hostname = str(dnsreq.q.qname)
+                if functools.reduce(
+                        operator.or_,
+                        (hostname == _hostname for _hostname in self.server.hostname_list),
+                        False
+                ):
                     dnsresp = dnsreq.reply(0, 0)
                     if dnsreq.q.qclass == dnslib.CLASS.IN:
                         if dnsreq.q.qtype == dnslib.QTYPE.AAAA:

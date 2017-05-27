@@ -1,5 +1,6 @@
 #!python3
 
+import sys
 from . import service
 from threading import Thread, Event
 
@@ -8,8 +9,10 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 def main():
-    server = service.ResolverServer()
-    server6 = service.ResolverServer6()
+    hostname_list = sys.argv[1:]
+
+    server = service.ResolverServer(hostname_list)
+    server6 = service.ResolverServer6(hostname_list)
 
     def resolver_server_thread(server):
         logging.info('Serving %s ...', repr(type(server)))
