@@ -1,11 +1,9 @@
 import functools
 import operator
-from . import ctypes
 import struct
 import socket
 import socketserver
 import dnslib
-import pyroute2
 import logging
 
 
@@ -19,17 +17,19 @@ class ResolverServer(socketserver.UDPServer):
         s.bind(self.server_address)
         try:
             s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,  # struct ip_mreqn
-                struct.pack('!4sli',
-                    socket.inet_pton(socket.AF_INET, '224.0.0.252'),
+                struct.pack('4sli',
+                    socket.inet_pton(socket.AF_INET, self.server_address[0]),
                     socket.INADDR_ANY,
-                    0
+                    self.ifindex
                 )
             )
         except OSError as err:
             logging.error('Failed to subscribe to IPv4 multicast. Error: %d, %s' % (err.errno, err.strerror))
 
-    def __init__(self, hostname_list):
-        self.hostname_list = hostname_list
+    def __init__(self, dispatcher, ifindex):
+        self.dispatcher = dispatcher
+        self.hostname_list = dispatcher.hostname_list
+        self.ifindex = ifindex
         super(ResolverServer, self).__init__(('224.0.0.252', 5355), ResolverHandler)
 
 
@@ -43,37 +43,22 @@ class ResolverServer6(socketserver.UDPServer):
         s.bind(self.server_address)
         try:
             s.setsockopt(socket.IPPROTO_IPV6, 20,  # IPV6_ADD_MEMBERSHIP
-                struct.pack("!16sI", socket.inet_pton(socket.AF_INET6, 'FF02:0:0:0:0:0:1:3'), 0)  # struct ipv6_mreq
+                struct.pack("16si", socket.inet_pton(socket.AF_INET6, self.server_address[0]), self.ifindex)  # struct ipv6_mreq
             )
         except OSError as err:
             logging.error('Failed to subscribe to IPv6 multicast. Error: %d, %s' % (err.errno, err.strerror))
 
-        s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_RECVPKTINFO,
-            struct.pack("!i", True)  # boolean value in an integer
-        )
-
-    def get_request(self):
-        iface_index = None
-        data, ancdata, flags, client_addr = self.socket.recvmsg(
-            self.max_packet_size,
-            socket.CMSG_SPACE(ctypes.sizeof(ctypes.in6_pktinfo))
-        )
-        for anc in ancdata:
-            if anc[0] == socket.IPPROTO_IPV6 and anc[1] == socket.IPV6_PKTINFO:
-                _in6_pktinfo = ctypes.in6_pktinfo.from_buffer_copy(anc[2])
-                iface_index = _in6_pktinfo.ipi6_ifindex
-        return (data, self.socket, iface_index), client_addr
-
-    def __init__(self, hostname_list):
-        self.hostname_list = hostname_list
-        super(ResolverServer6, self).__init__(('FF02:0:0:0:0:0:1:3', 5355, 0, 2), ResolverHandler)
+    def __init__(self, dispatcher, ifindex):
+        self.dispatcher = dispatcher
+        self.hostname_list = dispatcher.hostname_list
+        self.ifindex = ifindex
+        super(ResolverServer6, self).__init__(('FF02:0:0:0:0:0:1:3', 5355, 0, ifindex), ResolverHandler)
 
 
 class ResolverHandler(socketserver.BaseRequestHandler):
     def handle(self):
         packet_bytes = self.request[0]
         packet_socket = self.request[1]
-        iface_index = self.request[2]
         parsed = False
         try:
             dnsreq = dnslib.DNSRecord.parse(packet_bytes)
@@ -83,7 +68,7 @@ class ResolverHandler(socketserver.BaseRequestHandler):
         if parsed:
             logging.debug('IN FROM ADDRESS: %s, INTERFACE: %s, LLMNR DNS packet:\n%s' % (
                 self.client_address,
-                iface_index,
+                self.server.ifindex,
                 repr(dnsreq)
             ))
             if dnslib.OPCODE.get(dnsreq.header.opcode) != 'QUERY':
@@ -112,17 +97,7 @@ class ResolverHandler(socketserver.BaseRequestHandler):
                     dnsresp = dnsreq.reply(0, 0)
                     if dnsreq.q.qclass == dnslib.CLASS.IN:
                         if dnsreq.q.qtype == dnslib.QTYPE.AAAA:
-                            if iface_index is None:
-                                return
-
-                            def yield_ipaddr():
-                                for ifaddr in pyroute2.IPRoute().get_addr(family=socket.AF_INET6, index=iface_index):
-                                    if 'attrs' in ifaddr:
-                                        for ifaddr_attr_key, ifaddr_attr_value in ifaddr['attrs']:
-                                            if ifaddr_attr_key == 'IFA_ADDRESS':
-                                                yield ifaddr_attr_value
-
-                            for ipaddress in yield_ipaddr():
+                            for ipaddress in self.server.dispatcher.get_addresses_ipv6(self.server.ifindex):
                                 dnsresp.add_answer(dnslib.RR(
                                     dnsreq.q.qname.idna(),
                                     dnslib.QTYPE.AAAA,
