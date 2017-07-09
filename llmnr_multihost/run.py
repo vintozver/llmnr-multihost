@@ -96,12 +96,16 @@ class Dispatcher(object):
 
     def update_addresses(self, ifindex, ifname):
         logging.info('Updating interface addresses %d:%s' % (ifindex, ifname))
+
+        # create IP address map
         def yield_ipaddr(family):
-            for ifaddr in pyroute2.IPRoute().get_addr(family=family, index=ifindex):
-                if 'attrs' in ifaddr:
-                    for ifaddr_attr_key, ifaddr_attr_value in ifaddr['attrs']:
-                        if ifaddr_attr_key == 'IFA_ADDRESS':
-                            yield ifaddr_attr_value
+            with pyroute2.IPRoute() as netlink_route:
+                for ifaddr in netlink_route.get_addr(family=family, index=ifindex):
+                    if 'attrs' in ifaddr:
+                        for ifaddr_attr_key, ifaddr_attr_value in ifaddr['attrs']:
+                            if ifaddr_attr_key == 'IFA_ADDRESS':
+                                yield ifaddr_attr_value
+        # assign IP address map
         self.address_map_ipv4[ifindex] = list(yield_ipaddr(socket.AF_INET))
         self.address_map_ipv6[ifindex] = list(yield_ipaddr(socket.AF_INET6))
 
@@ -123,8 +127,9 @@ def main():
 
     logging.info('Adding current interfaces')
     dispatcher = Dispatcher(hostname_list)
-    for interface in pyroute2.IPRoute().get_links():
-        dispatcher.add_interface(interface['index'], dict(interface['attrs'])['IFLA_IFNAME'])
+    with pyroute2.IPRoute() as netlink_route:
+        for interface in netlink_route.get_links():
+            dispatcher.add_interface(interface['index'], dict(interface['attrs'])['IFLA_IFNAME'])
 
     def ipdb_callback(ipdb, msg, action):
         logging.debug('NETLINK event: %s, %s' % (repr(msg), action))
